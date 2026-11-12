@@ -70,6 +70,8 @@ public class MainActivity extends Activity {
     private Set<String> hidden = new HashSet<>();
 
     private EditText search;
+    private TextView setDefaultBanner;
+    private static final int REQ_HOME = 1;
     private AppAdapter adapter;
 
     @Override
@@ -82,6 +84,17 @@ public class MainActivity extends Activity {
         root.setFitsSystemWindows(true);
         int pad = dp(24);
         root.setPadding(pad, dp(16), pad, 0);
+
+        // Varsayilan ana ekran degilsek ustte gorunen uyari.
+        setDefaultBanner = new TextView(this);
+        setDefaultBanner.setText("Ana ekran olarak ayarla →");
+        setDefaultBanner.setTextColor(Color.BLACK);
+        setDefaultBanner.setBackgroundColor(Color.WHITE);
+        setDefaultBanner.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        setDefaultBanner.setPadding(dp(16), dp(14), dp(16), dp(14));
+        setDefaultBanner.setOnClickListener(v -> askToBeDefaultHome());
+        root.addView(setDefaultBanner, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         search = new EditText(this);
         search.setHint("ara");
@@ -145,6 +158,46 @@ public class MainActivity extends Activity {
         hideKeyboard();
         loadApps();
         applyFilter();
+        setDefaultBanner.setVisibility(isDefaultHome() ? View.GONE : View.VISIBLE);
+    }
+
+    private boolean isDefaultHome() {
+        Intent home = new Intent(Intent.ACTION_MAIN);
+        home.addCategory(Intent.CATEGORY_HOME);
+        ResolveInfo ri = getPackageManager().resolveActivity(home, PackageManager.MATCH_DEFAULT_ONLY);
+        return ri != null && ri.activityInfo != null
+                && getPackageName().equals(ri.activityInfo.packageName);
+    }
+
+    private void askToBeDefaultHome() {
+        // Android 10+: sistemin "varsayilan ana ekran" sorusunu ac.
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            try {
+                android.app.role.RoleManager rm = getSystemService(android.app.role.RoleManager.class);
+                if (rm != null && rm.isRoleAvailable(android.app.role.RoleManager.ROLE_HOME)
+                        && !rm.isRoleHeld(android.app.role.RoleManager.ROLE_HOME)) {
+                    startActivityForResult(
+                            rm.createRequestRoleIntent(android.app.role.RoleManager.ROLE_HOME), REQ_HOME);
+                    return;
+                }
+            } catch (Exception ignored) { }
+        }
+        openHomeSettings();
+    }
+
+    private void openHomeSettings() {
+        try {
+            startActivity(new Intent(Settings.ACTION_HOME_SETTINGS));
+        } catch (Exception e) {
+            startActivity(new Intent(Settings.ACTION_SETTINGS));
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        // Bazi telefonlarda (Xiaomi vb.) bu pencere sessizce kapanir; o zaman ayarlari ac.
+        if (requestCode == REQ_HOME && !isDefaultHome()) openHomeSettings();
     }
 
     @Override
