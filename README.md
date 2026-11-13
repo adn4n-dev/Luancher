@@ -3,13 +3,14 @@
 Siyah arka plan, beyaz yazı, ikon yok, rozet yok. Uygulamalar alfabetik liste.
 
 - **İnternet izni yok.** Veri hiçbir yere gidemez. Dış kütüphane yok, tüm kod tek dosya: `app/src/main/java/com/sade/launcher/MainActivity.java`
-- **Üstte:** saat (dokun → alarmlar), tarih (dokun → takvim), pil, bugünkü ekran süresi (isteğe bağlı).
-- **Favoriler:** saatin altında büyük yazıyla, en fazla 7.
-- **Tüm uygulamalar:** harf başlıklarıyla alfabetik.
-- **Aşağı kaydır:** bildirim paneli.
-- **Uzun bas:** alttan açılan menü. Favori / Yeniden adlandır / Gizle / Bilgi / Kaldır, ayrıca o uygulamada bugün ne kadar kaldığın.
-- **Gizle:** sadece aramayla çıkar, açmadan önce 5 sn bekletir ve bugünkü süreni hatırlatır.
-- **Ara:** yazınca üst kısım kaybolur. Sonuç yoksa internette arar.
+- **Ana ekran:** üstte saat (dokun → alarmlar), tarih (dokun → takvim), pil ve isteğe bağlı ekran süresi. Altta, başparmak hizasında favoriler (en fazla 7).
+- **Sağ kenarda harf şeridi:** parmağını üzerinde gezdir, harfler dalga gibi kayar ve liste o harfe atlar.
+- **Yukarı kaydır:** tüm uygulamalar + arama (klavye açık gelir).
+- **Aşağı kaydır:** bildirim paneli. Çekmecedeyken ana ekrana döner.
+- **İkonlar:** gri (varsayılan), renkli veya kapalı.
+- **Uzun bas (uygulama):** alttan menü. Favori / Yeniden adlandır / Gizle / Bilgi / Kaldır, ayrıca bugünkü kullanım süresi.
+- **Uzun bas (boş alan):** Ayarlar. İkonlar, ekran süresi, gizli uygulamalar.
+- **Gizle:** uygulama sadece aramayla çıkar, açmadan önce 5 sn bekletir.
 
 ## Derleme
 

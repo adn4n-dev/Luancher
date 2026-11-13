@@ -13,7 +13,11 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.res.ColorStateList;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.ColorMatrix;
+import android.graphics.ColorMatrixColorFilter;
+import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
@@ -43,6 +47,7 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.AbsListView;
 import android.widget.BaseAdapter;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.TextClock;
@@ -57,22 +62,19 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.IntConsumer;
 
 /**
- * Sade Launcher
+ * Sade Launcher — Niagara tarzi duzen.
  *
- * Gorunum: siyah, ince yazilar, ikon yok, rozet yok.
- * - Ustte saat (dokun: alarmlar), tarih (dokun: takvim), pil, bugunku ekran suresi.
- * - Favoriler buyuk yaziyla (en fazla 7).
- * - Tum uygulamalar harf basliklariyla alfabetik.
- * - Asagi kaydir: bildirim paneli.
- * - Uzun bas: alttan acilan menu (favori, yeniden adlandir, gizle, bilgi, kaldir)
- *   + o uygulamada bugun ne kadar zaman gecirdigin.
- * - Gizli uygulamalar sadece aramayla cikar, acmadan once 5 saniye bekletir.
+ * Ana ekran: ustte saat/tarih/pil/ekran suresi, altta (basparmak hizasinda) favoriler.
+ * Sag kenar: harf seridi. Parmagini uzerinde gezdir -> harfler dalga gibi kayar,
+ *            tum uygulamalar o harfe atlar.
+ * Yukari kaydir: tum uygulamalar + arama (klavye acik).
+ * Asagi kaydir: bildirim paneli (cekmecedeyken: ana ekrana don).
+ * Uzun bas (uygulama): alttan menu. Uzun bas (bos alan): ayarlar.
+ * Gizli uygulamalar: sadece aramayla, 5 sn bekletmeyle acilir.
  *
- * Izinler: sadece EXPAND_STATUS_BAR (bildirim panelini acmak icin) ve istege bagli
- * kullanim erisimi (ekran suresi icin, sen acarsan). INTERNET izni YOK.
+ * INTERNET izni YOK.
  */
 public class MainActivity extends Activity {
 
@@ -92,6 +94,7 @@ public class MainActivity extends Activity {
     private static final String KEY_FAVS = "favs";
     private static final String KEY_NAME_PREFIX = "name:";
     private static final String KEY_USAGE_OFF = "usage_off";
+    private static final String KEY_ICONS = "icons"; // 0 kapali, 1 gri, 2 renkli
     private static final int MAX_FAVS = 7;
     private static final int HIDDEN_DELAY_SEC = 5;
     private static final int REQ_HOME = 1;
@@ -118,24 +121,31 @@ public class MainActivity extends Activity {
     }
 
     private final List<App> allApps = new ArrayList<>();
-    /** Listede gosterilen satirlar: String = harf basligi, App = uygulama. */
+    /** Cekmecedeki satirlar: String = harf basligi, App = uygulama, WebRow = internette ara. */
     private final List<Object> rows = new ArrayList<>();
+    private final Map<String, Integer> sectionRow = new HashMap<>();
+    private final List<String> sections = new ArrayList<>();
     private App firstMatch = null;
     private final List<String> favs = new ArrayList<>();
     private Set<String> hidden = new HashSet<>();
     private Map<String, Long> usageToday = new HashMap<>();
+    private final Map<String, Drawable> iconCache = new HashMap<>();
 
     private final Handler ui = new Handler(Looper.getMainLooper());
 
     private TextView setDefaultBanner;
-    private LinearLayout header;
+    private LinearLayout homeView;
+    private LinearLayout drawerView;
     private LinearLayout favBox;
     private TextView battery;
     private TextView usageView;
     private EditText search;
     private ListView list;
     private AppAdapter adapter;
+    private AlphaStrip strip;
+    private TextView bubble;
     private GestureDetector gestures;
+    private boolean drawerOpen = false;
 
     // =================================================================== arayuz
 
@@ -143,11 +153,15 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
+        FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(C_BG);
         root.setFitsSystemWindows(true);
-        root.setPadding(dp(28), dp(12), dp(28), 0);
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(28), dp(12), dp(44), 0); // sagda harf seridi icin yer
+        root.addView(content, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         // ---- "Ana ekran olarak ayarla" seridi
         setDefaultBanner = new TextView(this);
@@ -158,12 +172,17 @@ public class MainActivity extends Activity {
         setDefaultBanner.setPadding(dp(18), dp(14), dp(18), dp(14));
         setDefaultBanner.setBackground(rounded(Color.WHITE, 16));
         setDefaultBanner.setOnClickListener(v -> askToBeDefaultHome());
-        root.addView(setDefaultBanner, matchWrap());
+        content.addView(setDefaultBanner, matchWrap());
 
-        // ---- Ust kisim (arama yapinca kaybolur)
-        header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.VERTICAL);
-        header.setPadding(0, dp(40), 0, 0);
+        // ================= ANA EKRAN
+        homeView = new LinearLayout(this);
+        homeView.setOrientation(LinearLayout.VERTICAL);
+        homeView.setPadding(0, dp(36), 0, dp(28));
+        homeView.setOnLongClickListener(v -> {
+            v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+            showSettings();
+            return true;
+        });
 
         TextClock clock = new TextClock(this);
         clock.setFormat24Hour("HH:mm");
@@ -173,7 +192,7 @@ public class MainActivity extends Activity {
         clock.setTypeface(Typeface.create("sans-serif-thin", Typeface.NORMAL));
         clock.setIncludeFontPadding(false);
         clock.setOnClickListener(v -> safeStart(new Intent(AlarmClock.ACTION_SHOW_ALARMS)));
-        header.addView(clock, wrapWrap());
+        homeView.addView(clock, wrapWrap());
 
         LinearLayout infoRow = new LinearLayout(this);
         infoRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -194,23 +213,42 @@ public class MainActivity extends Activity {
         battery.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         battery.setPadding(dp(10), 0, 0, 0);
         infoRow.addView(battery, wrapWrap());
-        header.addView(infoRow, wrapWrap());
+        homeView.addView(infoRow, wrapWrap());
 
         usageView = new TextView(this);
         usageView.setTextColor(C_FAINT);
         usageView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         usageView.setPadding(dp(4), dp(4), 0, 0);
         usageView.setOnClickListener(v -> onUsageClicked());
-        header.addView(usageView, wrapWrap());
+        homeView.addView(usageView, wrapWrap());
+
+        // Bosluk: favoriler basparmak hizasina insin
+        View spacer = new View(this);
+        homeView.addView(spacer, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         favBox = new LinearLayout(this);
         favBox.setOrientation(LinearLayout.VERTICAL);
-        favBox.setPadding(0, dp(40), 0, dp(20));
-        header.addView(favBox, matchWrap());
+        homeView.addView(favBox, matchWrap());
 
-        root.addView(header, matchWrap());
+        TextView swipeHint = new TextView(this);
+        swipeHint.setText("︿");
+        swipeHint.setTextColor(C_FAINT);
+        swipeHint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        swipeHint.setGravity(Gravity.CENTER_HORIZONTAL);
+        swipeHint.setPadding(0, dp(20), 0, 0);
+        swipeHint.setOnClickListener(v -> showDrawer(true));
+        homeView.addView(swipeHint, matchWrap());
 
-        // ---- Arama kutusu (yuvarlak, koyu)
+        content.addView(homeView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        // ================= CEKMECE (tum uygulamalar)
+        drawerView = new LinearLayout(this);
+        drawerView.setOrientation(LinearLayout.VERTICAL);
+        drawerView.setPadding(0, dp(16), 0, 0);
+        drawerView.setVisibility(View.GONE);
+
         search = new EditText(this);
         search.setHint("Ara");
         search.setHintTextColor(C_FAINT);
@@ -223,10 +261,7 @@ public class MainActivity extends Activity {
         search.addTextChangedListener(new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
             public void onTextChanged(CharSequence s, int a, int b, int c) {}
-            public void afterTextChanged(Editable s) {
-                setHeaderVisible(s.length() == 0);
-                applyFilter();
-            }
+            public void afterTextChanged(Editable s) { applyFilter(); }
         });
         search.setOnEditorActionListener((v, actionId, event) -> {
             boolean go = actionId == EditorInfo.IME_ACTION_GO
@@ -239,12 +274,10 @@ public class MainActivity extends Activity {
         });
         LinearLayout.LayoutParams sp = matchWrap();
         sp.setMargins(0, 0, 0, dp(8));
-        root.addView(search, sp);
+        drawerView.addView(search, sp);
 
-        // ---- Tum uygulamalar
         list = new ListView(this);
         list.setDivider(null);
-        list.setFastScrollEnabled(true);
         list.setVerticalScrollBarEnabled(false);
         list.setOverScrollMode(View.OVER_SCROLL_NEVER);
         list.setSelector(new ColorDrawable(Color.TRANSPARENT));
@@ -270,21 +303,48 @@ public class MainActivity extends Activity {
             }
             public void onScroll(AbsListView v, int a, int b, int c) {}
         });
-        root.addView(list, new LinearLayout.LayoutParams(
+        drawerView.addView(list, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        content.addView(drawerView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        // ================= HARF SERIDI + BALON
+        strip = new AlphaStrip(this);
+        FrameLayout.LayoutParams stp = new FrameLayout.LayoutParams(dp(40),
+                ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END);
+        root.addView(strip, stp);
+
+        bubble = new TextView(this);
+        bubble.setTextColor(C_TEXT);
+        bubble.setTextSize(TypedValue.COMPLEX_UNIT_SP, 34);
+        bubble.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+        bubble.setGravity(Gravity.CENTER);
+        bubble.setBackground(rounded(C_SURFACE_2, 36));
+        bubble.setVisibility(View.GONE);
+        FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(dp(72), dp(72), Gravity.END | Gravity.TOP);
+        bp.setMargins(0, 0, dp(96), 0);
+        root.addView(bubble, bp);
 
         setContentView(root);
 
-        // ---- Asagi kaydir: bildirim paneli
+        // ================= KAYDIRMA HAREKETLERI
         gestures = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             @Override
             public boolean onFling(MotionEvent e1, MotionEvent e2, float vx, float vy) {
-                if (e1 == null) return false;
+                if (e1 == null || strip.touching) return false;
+                if (e1.getX() > root.getWidth() - dp(44)) return false; // harf seridi
                 float dy = e2.getY() - e1.getY();
                 float dx = e2.getX() - e1.getX();
+                if (Math.abs(dy) < dp(80) || Math.abs(dy) < Math.abs(dx) * 1.5f) return false;
+                if (!drawerOpen) {
+                    if (dy < 0) showDrawer(true);
+                    else expandNotifications();
+                    return true;
+                }
                 boolean listAtTop = !list.canScrollVertically(-1);
-                if (dy > dp(80) && Math.abs(dy) > Math.abs(dx) * 1.5f && listAtTop) {
-                    expandNotifications();
+                if (dy > 0 && listAtTop && search.getText().length() == 0) {
+                    showHome();
                     return true;
                 }
                 return false;
@@ -302,11 +362,15 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        // Ana ekrandayken Home tusuna basinca: favorilere don.
+        showHome();
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
-        search.setText("");
-        hideKeyboard();
-        list.setSelection(0);
         refreshAll();
         updateBattery();
         refreshUsage();
@@ -314,21 +378,72 @@ public class MainActivity extends Activity {
     }
 
     @Override
-    public void onBackPressed() {
-        search.setText("");
-        hideKeyboard();
-        list.smoothScrollToPosition(0);
+    protected void onStop() {
+        super.onStop();
+        // Bir uygulamaya gidip donunce ana ekranla karsilas.
+        showHomeInstant();
     }
 
-    private void setHeaderVisible(boolean show) {
-        if (show && header.getVisibility() != View.VISIBLE) {
-            header.setAlpha(0f);
-            header.setVisibility(View.VISIBLE);
-            header.animate().alpha(1f).setDuration(180).start();
-        } else if (!show && header.getVisibility() == View.VISIBLE) {
-            header.animate().cancel();
-            header.setVisibility(View.GONE);
+    @Override
+    public void onBackPressed() {
+        if (drawerOpen) showHome();
+    }
+
+    // =================================================================== ekranlar arasi gecis
+
+    private void showDrawer(boolean withKeyboard) {
+        if (!drawerOpen) {
+            drawerOpen = true;
+            homeView.setVisibility(View.GONE);
+            drawerView.setVisibility(View.VISIBLE);
+            drawerView.setAlpha(0f);
+            drawerView.setTranslationY(dp(40));
+            drawerView.animate().alpha(1f).translationY(0).setDuration(200).start();
+            list.setSelection(0);
         }
+        if (withKeyboard) {
+            search.requestFocus();
+            InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) imm.showSoftInput(search, InputMethodManager.SHOW_IMPLICIT);
+        }
+    }
+
+    private void showHome() {
+        if (!drawerOpen) return;
+        showHomeInstant();
+        homeView.setAlpha(0f);
+        homeView.setTranslationY(-dp(24));
+        homeView.animate().alpha(1f).translationY(0).setDuration(200).start();
+    }
+
+    private void showHomeInstant() {
+        drawerOpen = false;
+        search.setText("");
+        hideKeyboard();
+        drawerView.animate().cancel();
+        drawerView.setVisibility(View.GONE);
+        homeView.setVisibility(View.VISIBLE);
+        homeView.setAlpha(1f);
+        homeView.setTranslationY(0);
+    }
+
+    /** Harf seridinde parmak bir harfe gelince. */
+    private void onStripLetter(String letter, float y) {
+        if (search.getText().length() > 0) search.setText("");
+        showDrawer(false);
+        hideKeyboard();
+        Integer pos = sectionRow.get(letter);
+        if (pos != null) list.setSelectionFromTop(pos, 0);
+        bubble.setText(letter);
+        bubble.setVisibility(View.VISIBLE);
+        bubble.setTranslationY(Math.max(0, y - dp(36)));
+    }
+
+    private void onStripRelease() {
+        bubble.animate().alpha(0f).setDuration(150).withEndAction(() -> {
+            bubble.setVisibility(View.GONE);
+            bubble.setAlpha(1f);
+        }).start();
     }
 
     // =================================================================== veri
@@ -365,13 +480,21 @@ public class MainActivity extends Activity {
         rows.clear();
         firstMatch = null;
         if (q.isEmpty()) {
+            sectionRow.clear();
+            sections.clear();
             String lastSection = null;
             for (App a : allApps) {
                 if (hidden.contains(a.key())) continue;
                 String s = sectionOf(a);
-                if (!s.equals(lastSection)) { rows.add(s); lastSection = s; }
+                if (!s.equals(lastSection)) {
+                    sectionRow.put(s, rows.size());
+                    sections.add(s);
+                    rows.add(s);
+                    lastSection = s;
+                }
                 rows.add(a);
             }
+            strip.setLetters(sections);
         } else {
             List<App> starts = new ArrayList<>();
             List<App> contains = new ArrayList<>();
@@ -396,11 +519,13 @@ public class MainActivity extends Activity {
             TextView tv = new TextView(this);
             tv.setText(app.label);
             tv.setTextColor(C_TEXT);
-            tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 30);
+            tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
             tv.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
-            tv.setPadding(dp(4), dp(7), dp(4), dp(7));
+            tv.setPadding(dp(4), dp(9), dp(12), dp(9));
+            tv.setGravity(Gravity.CENTER_VERTICAL);
             tv.setSingleLine(true);
             tv.setBackground(ripple());
+            setIcon(tv, app, 34);
             tv.setOnClickListener(v -> launch(app));
             tv.setOnLongClickListener(v -> {
                 v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
@@ -412,7 +537,7 @@ public class MainActivity extends Activity {
         }
         if (shown == 0) {
             TextView hint = new TextView(this);
-            hint.setText("Bir uygulamaya uzun bas → Favorilere ekle");
+            hint.setText("Yukarı kaydır, bir uygulamaya uzun bas → Favorilere ekle");
             hint.setTextColor(C_FAINT);
             hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
             hint.setPadding(dp(4), 0, 0, 0);
@@ -434,6 +559,82 @@ public class MainActivity extends Activity {
         BatteryManager bm = (BatteryManager) getSystemService(Context.BATTERY_SERVICE);
         int level = bm != null ? bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) : -1;
         battery.setText(level > 0 ? "·  %" + level : "");
+    }
+
+    // =================================================================== ikonlar
+
+    private int iconMode() { return prefs().getInt(KEY_ICONS, 1); }
+
+    private void setIcon(TextView tv, App app, int sizeDp) {
+        int mode = iconMode();
+        if (mode == 0) {
+            tv.setCompoundDrawablesRelative(null, null, null, null);
+            return;
+        }
+        Drawable base = iconCache.get(app.key());
+        if (base == null) {
+            try {
+                base = getPackageManager().getActivityIcon(app.component);
+            } catch (Exception e) {
+                base = getPackageManager().getDefaultActivityIcon();
+            }
+            iconCache.put(app.key(), base);
+        }
+        Drawable.ConstantState cs = base.getConstantState();
+        Drawable d = (cs != null ? cs.newDrawable(getResources()) : base).mutate();
+        if (mode == 1) {
+            ColorMatrix cm = new ColorMatrix();
+            cm.setSaturation(0f);
+            d.setColorFilter(new ColorMatrixColorFilter(cm));
+            d.setAlpha(200);
+        }
+        int px = dp(sizeDp);
+        d.setBounds(0, 0, px, px);
+        tv.setCompoundDrawablesRelative(d, null, null, null);
+        tv.setCompoundDrawablePadding(dp(16));
+    }
+
+    // =================================================================== ayarlar
+
+    private void showSettings() {
+        String[] iconNames = {"Kapalı", "Gri", "Renkli"};
+        boolean usageOff = prefs().getBoolean(KEY_USAGE_OFF, false);
+        Sheet s = new Sheet("Ayarlar", null);
+        s.item("İkonlar: " + iconNames[iconMode()], false, () -> {
+            prefs().edit().putInt(KEY_ICONS, (iconMode() + 1) % 3).apply();
+            iconCache.clear();
+            refreshAll();
+            showSettings();
+        });
+        s.item(usageOff ? "Ekran süresini göster" : "Ekran süresini gizle", false, () -> {
+            prefs().edit().putBoolean(KEY_USAGE_OFF, !usageOff).apply();
+            refreshUsage();
+        });
+        s.item("Gizli uygulamalar (" + hiddenCount() + ")", false, this::showHiddenApps);
+        s.item("Varsayılan ana ekranı değiştir", false, this::openHomeSettings);
+        s.show();
+    }
+
+    private int hiddenCount() {
+        int n = 0;
+        for (App a : allApps) if (hidden.contains(a.key())) n++;
+        return n;
+    }
+
+    private void showHiddenApps() {
+        Sheet s = new Sheet("Gizli uygulamalar", "Dokun → listeye geri al");
+        int n = 0;
+        for (App a : allApps) {
+            if (!hidden.contains(a.key())) continue;
+            s.item(a.label, false, () -> {
+                hidden.remove(a.key());
+                saveHidden();
+                refreshAll();
+            });
+            n++;
+        }
+        if (n == 0) s.row("Gizli uygulama yok", "");
+        s.show();
     }
 
     // =================================================================== ekran suresi
@@ -885,15 +1086,16 @@ public class MainActivity extends Activity {
                 if (tv == null) {
                     tv = new TextView(MainActivity.this);
                     tv.setTextColor(C_TEXT);
-                    tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+                    tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 19);
                     tv.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
                     tv.setGravity(Gravity.CENTER_VERTICAL);
-                    tv.setPadding(dp(4), dp(11), dp(4), dp(11));
+                    tv.setPadding(dp(4), dp(10), dp(4), dp(10));
                     tv.setSingleLine(true);
                     tv.setBackground(ripple());
                 }
                 App a = (App) o;
                 tv.setText(a.label);
+                setIcon(tv, a, 30);
                 tv.setAlpha(hidden.contains(a.key()) ? 0.4f : 1f);
             } else if (o instanceof WebRow) {
                 if (tv == null) {
@@ -903,7 +1105,7 @@ public class MainActivity extends Activity {
                     tv.setPadding(dp(4), dp(14), dp(4), dp(14));
                     tv.setBackground(ripple());
                 }
-                tv.setText("İnternette ara: \u201C" + ((WebRow) o).query + "\u201D  \u2192");
+                tv.setText("İnternette ara: “" + ((WebRow) o).query + "”  →");
             } else {
                 if (tv == null) {
                     tv = new TextView(MainActivity.this);
@@ -916,6 +1118,128 @@ public class MainActivity extends Activity {
                 tv.setText((String) o);
             }
             return tv;
+        }
+    }
+
+    // =================================================================== harf seridi (dalga efekti)
+
+    /**
+     * Sag kenardaki harf seridi. Parmak uzerinde gezerken yakindaki harfler
+     * sola dogru kayip buyur (dalga), secili harf beyaz olur.
+     */
+    private class AlphaStrip extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final List<String> letters = new ArrayList<>();
+        private float touchY = -1;
+        boolean touching = false;
+        private int currentIndex = -1;
+        private float waveProgress = 0f; // 0 = sakin, 1 = tam dalga
+
+        AlphaStrip(Context c) {
+            super(c);
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        }
+
+        void setLetters(List<String> l) {
+            letters.clear();
+            letters.addAll(l);
+            invalidate();
+        }
+
+        private float top() { return dp(110); }
+        private float bottom() { return getHeight() - dp(50); }
+
+        private float step() {
+            if (letters.isEmpty()) return 0;
+            return Math.min(dp(22), (bottom() - top()) / letters.size());
+        }
+
+        private float startY() {
+            // Harfleri dikeyde ortala
+            float total = step() * letters.size();
+            return top() + ((bottom() - top()) - total) / 2f;
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            if (letters.isEmpty()) return;
+            float step = step();
+            float y0 = startY();
+            float baseX = getWidth() - dp(18);
+            float reach = dp(110);
+            for (int i = 0; i < letters.size(); i++) {
+                float cy = y0 + step * i + step / 2f;
+                float k = 0f;
+                if (waveProgress > 0f && touchY >= 0) {
+                    float d = Math.abs(cy - touchY);
+                    if (d < reach) {
+                        // yumusak dalga: cos egrisi
+                        k = (float) ((Math.cos(Math.PI * d / reach) + 1) / 2) * waveProgress;
+                    }
+                }
+                float size = sp(11) * (1f + 0.9f * k);
+                paint.setTextSize(size);
+                boolean selected = touching && i == currentIndex;
+                paint.setColor(selected ? C_TEXT : blend(C_FAINT, C_DIM, k));
+                float x = baseX - k * dp(30);
+                canvas.drawText(letters.get(i), x, cy + size / 3f, paint);
+            }
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent e) {
+            if (letters.isEmpty()) return false;
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    touching = true;
+                    getParent().requestDisallowInterceptTouchEvent(true);
+                    animateWave(1f);
+                    // fallthrough
+                case MotionEvent.ACTION_MOVE: {
+                    touchY = e.getY();
+                    int idx = (int) ((touchY - startY()) / step());
+                    idx = Math.max(0, Math.min(letters.size() - 1, idx));
+                    if (idx != currentIndex) {
+                        currentIndex = idx;
+                        performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
+                        onStripLetter(letters.get(idx), touchY);
+                    }
+                    invalidate();
+                    return true;
+                }
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    touching = false;
+                    currentIndex = -1;
+                    animateWave(0f);
+                    onStripRelease();
+                    return true;
+            }
+            return false;
+        }
+
+        private void animateWave(float target) {
+            android.animation.ValueAnimator va =
+                    android.animation.ValueAnimator.ofFloat(waveProgress, target);
+            va.setDuration(160);
+            va.addUpdateListener(a -> {
+                waveProgress = (float) a.getAnimatedValue();
+                invalidate();
+            });
+            va.start();
+        }
+
+        private float sp(float v) {
+            return TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v,
+                    getResources().getDisplayMetrics());
+        }
+
+        private int blend(int a, int b, float t) {
+            int r = (int) (Color.red(a) + (Color.red(b) - Color.red(a)) * t);
+            int g = (int) (Color.green(a) + (Color.green(b) - Color.green(a)) * t);
+            int bl = (int) (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * t);
+            return Color.rgb(r, g, bl);
         }
     }
 }
