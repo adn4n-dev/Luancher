@@ -4,10 +4,11 @@ Siyah arka plan, beyaz yazı, ikon yok, rozet yok. Uygulamalar alfabetik liste.
 
 - **İzin yok, internet yok.** Manifest'e bakabilirsin: `INTERNET` izni yok, veri hiçbir yere gidemez.
 - **Dış kütüphane yok.** Sadece Android'in kendi API'leri. Tüm kod tek dosya: `app/src/main/java/com/sade/launcher/MainActivity.java`
-- **Dokun:** uygulamayı aç.
-- **Uzun bas:** Gizle / Uygulama bilgisi / Kaldır.
-- **Gizle:** Uygulama listeden kalkar, sadece "ara" kutusuna yazınca çıkar. Sosyal medya için.
-- **Ara + klavyede Git:** ilk sonucu açar.
+- **Üstte:** saat, tarih, pil. Saate dokun → alarmlar, tarihe dokun → takvim.
+- **Favoriler:** saatin altında büyük yazıyla, en fazla 7 tane.
+- **Uzun bas:** Favorilere ekle / Yeniden adlandır / Gizle / Uygulama bilgisi / Kaldır.
+- **Gizle:** Uygulama listeden kalkar, sadece aramayla çıkar ve açmadan önce 5 saniye bekletir.
+- **Ara + klavyede Git:** ilk sonucu açar. Sonuç yoksa internette arar.
 - **Geri tuşu:** aramayı temizler.
 
 ## Derleme
