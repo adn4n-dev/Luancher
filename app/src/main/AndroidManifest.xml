@@ -1,9 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Izinler: HIC YOK. INTERNET izni yok, yani uygulama hicbir yere veri gonderemez.
-  <queries> blogu sadece "ana ekranda gorunen uygulamalari" listelemeye yarar.
+  INTERNET izni YOK: uygulama hicbir yere veri gonderemez.
+  EXPAND_STATUS_BAR: asagi kaydirinca bildirim panelini acmak icin.
+  PACKAGE_USAGE_STATS: istege bagli ekran suresi; sen Ayarlar'dan acmazsan calismaz.
+  <queries>: ana ekranda gorunen uygulamalari listelemek icin.
 -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.EXPAND_STATUS_BAR" />
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
 
     <queries>
         <intent>
